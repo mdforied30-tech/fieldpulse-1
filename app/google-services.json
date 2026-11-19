@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "212610920027",
+    "project_id": "pixauradesigns-f2eef",
+    "storage_bucket": "pixauradesigns-f2eef.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:212610920027:android:e029d6ce018b7a153c997e",
+        "android_client_info": {
+          "package_name": "com.aistudio.fieldpulse.krmqvx"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "212610920027-91bbbvhp6aut0v3lo8a7us2ropb1ik8c.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.aistudio.fieldpulse.krmqvx",
+            "certificate_hash": "5ed4a280dd7cc1816550eb3022b7ae45ed40064f"
+          }
+        },
+        {
+          "client_id": "212610920027-ngnnsg01riv14btnh1li2aj68dnt6q7f.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAoelYNPuU5elGblX7cx8R-js5_I0QPC40"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "212610920027-ngnnsg01riv14btnh1li2aj68dnt6q7f.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

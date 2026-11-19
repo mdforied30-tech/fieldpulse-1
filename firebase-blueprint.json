@@ -1,0 +1,130 @@
+{
+  "entities": {
+    "WorkerProfile": {
+      "title": "WorkerProfile",
+      "description": "Registered field worker or admin profile with live permission sync and telemetry status.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID of the worker." },
+        "name": { "type": "string", "description": "Full display name of the worker." },
+        "email": { "type": "string", "description": "Authenticated Google email address." },
+        "phone": { "type": "string", "description": "Contact phone number." },
+        "department": { "type": "string", "description": "Field division or trade specialty." },
+        "role": { "type": "string", "enum": ["worker", "admin"], "description": "Assigned role." },
+        "locationGranted": { "type": "boolean" },
+        "backgroundLocationGranted": { "type": "boolean" },
+        "cameraGranted": { "type": "boolean" },
+        "micGranted": { "type": "boolean" },
+        "permissionStatus": { "type": "string", "enum": ["PENDING", "PARTIAL", "ALL_GRANTED"] },
+        "serviceRunning": { "type": "boolean" },
+        "activeCameraFacing": { "type": "string", "enum": ["BACK", "FRONT"] },
+        "requestedCameraFacing": { "type": "string", "enum": ["BACK", "FRONT"] },
+        "cameraStreamEnabled": { "type": "boolean" },
+        "micStreamEnabled": { "type": "boolean" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "accuracyMeters": { "type": "number" },
+        "speedMps": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on creation." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": [
+        "userId", "name", "email", "phone", "department", "role",
+        "locationGranted", "backgroundLocationGranted", "cameraGranted", "micGranted",
+        "permissionStatus", "serviceRunning", "activeCameraFacing", "requestedCameraFacing",
+        "cameraStreamEnabled", "micStreamEnabled", "createdAt", "updatedAt"
+      ]
+    },
+    "WorkerTelemetry": {
+      "title": "WorkerTelemetry",
+      "description": "High-frequency live camera frame and microphone audio level telemetry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "cameraFrameBase64": { "type": "string" },
+        "cameraFacing": { "type": "string", "enum": ["BACK", "FRONT"] },
+        "audioLevelDb": { "type": "number" },
+        "audioBars": { "type": "array" },
+        "streamingVideo": { "type": "boolean" },
+        "streamingAudio": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "cameraFacing", "audioLevelDb", "audioBars", "streamingVideo", "streamingAudio", "updatedAt"]
+    },
+    "LocationLog": {
+      "title": "LocationLog",
+      "description": "Immutable GPS breadcrumb logged by the worker foreground service.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "accuracyMeters": { "type": "number" },
+        "speedMps": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "latitude", "longitude", "accuracyMeters", "speedMps", "createdAt"]
+    },
+    "MediaLog": {
+      "title": "MediaLog",
+      "description": "Work proof entry or media snapshot uploaded by a worker.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "taskId": { "type": "string" },
+        "note": { "type": "string" },
+        "mediaType": { "type": "string", "enum": ["TEXT", "PHOTO", "AUDIO"] },
+        "thumbnailBase64": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "note", "mediaType", "createdAt"]
+    },
+    "FieldTask": {
+      "title": "FieldTask",
+      "description": "Operational task assigned by an admin to a field worker.",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedWorkerId": { "type": "string" },
+        "assignedWorkerName": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "URGENT"] },
+        "status": { "type": "string", "enum": ["PENDING", "IN_PROGRESS", "COMPLETED"] },
+        "locationLabel": { "type": "string" },
+        "workerNotes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "title", "description", "assignedWorkerId", "assignedWorkerName",
+        "createdBy", "priority", "status", "locationLabel", "workerNotes",
+        "createdAt", "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/workers/{workerId}": {
+      "schema": { "$ref": "#/entities/WorkerProfile" },
+      "description": "Worker profiles, permission state, and latest GPS coordinates."
+    },
+    "/workers/{workerId}/telemetry/{telemetryId}": {
+      "schema": { "$ref": "#/entities/WorkerTelemetry" },
+      "description": "Live camera frame and audio visualizer telemetry stream."
+    },
+    "/workers/{workerId}/locationLogs/{logId}": {
+      "schema": { "$ref": "#/entities/LocationLog" },
+      "description": "Historical GPS coordinates transmitted by background service."
+    },
+    "/workers/{workerId}/mediaLogs/{logId}": {
+      "schema": { "$ref": "#/entities/MediaLog" },
+      "description": "Worker proof-of-work logs and captured media snapshots."
+    },
+    "/tasks/{taskId}": {
+      "schema": { "$ref": "#/entities/FieldTask" },
+      "description": "Assigned tasks managed by Admin and updated by assigned Workers."
+    }
+  }
+}

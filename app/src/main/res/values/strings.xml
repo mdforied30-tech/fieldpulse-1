@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">FieldPulse</string>
+    <string name="sign_in_title">FieldPulse Operations</string>
+    <string name="sign_in_subtitle">Choose your portal to access Admin Live Monitor or Worker Telemetry.</string>
+    <string name="sign_in_with_google">Sign in with Google</string>
+    <string name="admin_login_title">Admin Login</string>
+    <string name="admin_login_subtitle">Authorized Admin only • Live Monitor, GPS, Camera, Mic &amp; Tasks</string>
+    <string name="worker_login_title">Workers Login</string>
+    <string name="worker_login_subtitle">Field Workers • Allow Location, Camera &amp; Microphone</string>
+    <string name="nav_live_monitor">Live Monitor</string>
+    <string name="nav_tasks">Tasks</string>
+    <string name="nav_workers">Workers</string>
+    <string name="nav_dashboard">Field Desk</string>
+    <string name="nav_broadcaster">Live Feed</string>
+    <string name="nav_logs">Proof Logs</string>
+    <string name="permission_allow_all">Allow All Permissions</string>
+    <string name="permission_all_granted">ALL GRANTED</string>
+    <string name="service_notification_channel_name">Worker Monitoring Telemetry</string>
+    <string name="service_notification_title">FieldPulse Active Telemetry</string>
+    <string name="service_notification_text">Live GPS, camera, and audio readiness synced with Admin Command.</string>
+</resources>

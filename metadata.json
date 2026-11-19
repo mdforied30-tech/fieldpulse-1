@@ -1,0 +1,6 @@
+{
+  "name": "FieldPulse",
+  "description": "Real-time field worker monitoring, live telemetry, camera/audio status, and task dispatch system.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

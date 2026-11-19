@@ -1,0 +1,269 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: default deny everything
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'mdforied30@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isValidWorker(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.email is string && data.email.size() >= 3 && data.email.size() <= 120 &&
+        data.phone is string && data.phone.size() <= 30 &&
+        data.department is string && data.department.size() >= 1 && data.department.size() <= 50 &&
+        data.role in ['worker', 'admin'] &&
+        data.locationGranted is bool &&
+        data.backgroundLocationGranted is bool &&
+        data.cameraGranted is bool &&
+        data.micGranted is bool &&
+        data.permissionStatus in ['PENDING', 'PARTIAL', 'ALL_GRANTED'] &&
+        data.serviceRunning is bool &&
+        data.activeCameraFacing in ['BACK', 'FRONT'] &&
+        data.requestedCameraFacing in ['BACK', 'FRONT'] &&
+        data.cameraStreamEnabled is bool &&
+        data.micStreamEnabled is bool &&
+        (!('latitude' in data) || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude is number) &&
+        (!('accuracyMeters' in data) || data.accuracyMeters is number) &&
+        (!('speedMps' in data) || data.speedMps is number) &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidTelemetry(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        (!('cameraFrameBase64' in data) || (data.cameraFrameBase64 is string && data.cameraFrameBase64.size() <= 150000)) &&
+        data.cameraFacing in ['BACK', 'FRONT'] &&
+        data.audioLevelDb is number &&
+        data.audioBars is list && data.audioBars.size() <= 16 &&
+        (data.audioBars.size() == 0 || data.audioBars[0] is number) &&
+        data.streamingVideo is bool &&
+        data.streamingAudio is bool &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    function isValidLocationLog(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        data.latitude is number &&
+        data.longitude is number &&
+        data.accuracyMeters is number &&
+        data.speedMps is number &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidMediaLog(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+        (!('taskId' in data) || (data.taskId is string && data.taskId.size() <= 128)) &&
+        data.note is string && data.note.size() >= 1 && data.note.size() <= 500 &&
+        data.mediaType in ['TEXT', 'PHOTO', 'AUDIO'] &&
+        (!('thumbnailBase64' in data) || (data.thumbnailBase64 is string && data.thumbnailBase64.size() <= 150000)) &&
+        (!('latitude' in data) || data.latitude is number) &&
+        (!('longitude' in data) || data.longitude is number) &&
+        data.createdAt is timestamp && data.createdAt <= request.time;
+    }
+
+    function isValidTask(data) {
+      return data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.description is string && data.description.size() <= 1000 &&
+        data.assignedWorkerId is string && data.assignedWorkerId.size() >= 1 && data.assignedWorkerId.size() <= 128 &&
+        data.assignedWorkerName is string && data.assignedWorkerName.size() >= 1 && data.assignedWorkerName.size() <= 80 &&
+        data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+        data.priority in ['LOW', 'MEDIUM', 'HIGH', 'URGENT'] &&
+        data.status in ['PENDING', 'IN_PROGRESS', 'COMPLETED'] &&
+        data.locationLabel is string && data.locationLabel.size() <= 120 &&
+        data.workerNotes is string && data.workerNotes.size() <= 500 &&
+        data.createdAt is timestamp && data.createdAt <= request.time &&
+        data.updatedAt is timestamp && data.updatedAt <= request.time;
+    }
+
+    match /workers/{workerId} {
+      allow get: if isValidId(workerId) && (isOwner(workerId) || isAdmin());
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+
+      allow create: if isSignedIn() &&
+        isValidId(workerId) &&
+        isOwner(workerId) &&
+        incoming().userId == request.auth.uid &&
+        incoming().keys().hasAll([
+          'userId', 'name', 'email', 'phone', 'department', 'role',
+          'locationGranted', 'backgroundLocationGranted', 'cameraGranted', 'micGranted',
+          'permissionStatus', 'serviceRunning', 'activeCameraFacing', 'requestedCameraFacing',
+          'cameraStreamEnabled', 'micStreamEnabled', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'name', 'email', 'phone', 'department', 'role',
+          'locationGranted', 'backgroundLocationGranted', 'cameraGranted', 'micGranted',
+          'permissionStatus', 'serviceRunning', 'activeCameraFacing', 'requestedCameraFacing',
+          'cameraStreamEnabled', 'micStreamEnabled', 'latitude', 'longitude',
+          'accuracyMeters', 'speedMps', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidWorker(incoming()) &&
+        (incoming().role == 'worker' || isAdmin());
+
+      allow update: if isSignedIn() &&
+        isValidId(workerId) &&
+        isValidWorker(incoming()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'name', 'phone', 'department', 'role',
+            'locationGranted', 'backgroundLocationGranted', 'cameraGranted', 'micGranted',
+            'permissionStatus', 'serviceRunning', 'activeCameraFacing', 'requestedCameraFacing',
+            'cameraStreamEnabled', 'micStreamEnabled', 'latitude', 'longitude',
+            'accuracyMeters', 'speedMps', 'updatedAt'
+          ])) ||
+          (isOwner(workerId) &&
+            incoming().role == existing().role &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'name', 'phone', 'department',
+              'locationGranted', 'backgroundLocationGranted', 'cameraGranted', 'micGranted',
+              'permissionStatus', 'serviceRunning', 'activeCameraFacing',
+              'cameraStreamEnabled', 'micStreamEnabled', 'latitude', 'longitude',
+              'accuracyMeters', 'speedMps', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isValidId(workerId) && isAdmin();
+
+      match /telemetry/{telemetryId} {
+        allow get: if isValidId(workerId) && isValidId(telemetryId) && (isOwner(workerId) || isAdmin());
+        allow list: if isValidId(workerId) && (isOwner(workerId) || isAdmin());
+
+        allow create: if isSignedIn() &&
+          isValidId(workerId) &&
+          isValidId(telemetryId) &&
+          (isOwner(workerId) || isAdmin()) &&
+          incoming().userId == workerId &&
+          incoming().keys().hasAll([
+            'userId', 'cameraFacing', 'audioLevelDb', 'audioBars',
+            'streamingVideo', 'streamingAudio', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'userId', 'cameraFrameBase64', 'cameraFacing', 'audioLevelDb', 'audioBars',
+            'streamingVideo', 'streamingAudio', 'updatedAt'
+          ]) &&
+          isValidTelemetry(incoming());
+
+        allow update: if isSignedIn() &&
+          isValidId(workerId) &&
+          isValidId(telemetryId) &&
+          (isOwner(workerId) || isAdmin()) &&
+          incoming().userId == existing().userId &&
+          isValidTelemetry(incoming()) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'cameraFrameBase64', 'cameraFacing', 'audioLevelDb', 'audioBars',
+            'streamingVideo', 'streamingAudio', 'updatedAt'
+          ]);
+
+        allow delete: if isValidId(workerId) && isValidId(telemetryId) && (isOwner(workerId) || isAdmin());
+      }
+
+      match /locationLogs/{logId} {
+        allow get: if isValidId(workerId) && isValidId(logId) && (isOwner(workerId) || isAdmin());
+        allow list: if isValidId(workerId) && (isOwner(workerId) || isAdmin());
+
+        allow create: if isSignedIn() &&
+          isValidId(workerId) &&
+          isValidId(logId) &&
+          isOwner(workerId) &&
+          incoming().userId == workerId &&
+          incoming().keys().hasAll(['userId', 'latitude', 'longitude', 'accuracyMeters', 'speedMps', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'latitude', 'longitude', 'accuracyMeters', 'speedMps', 'createdAt']) &&
+          isValidLocationLog(incoming());
+
+        allow update: if false;
+        allow delete: if isValidId(workerId) && isValidId(logId) && isAdmin();
+      }
+
+      match /mediaLogs/{logId} {
+        allow get: if isValidId(workerId) && isValidId(logId) && (isOwner(workerId) || isAdmin());
+        allow list: if isValidId(workerId) && (isOwner(workerId) || isAdmin());
+
+        allow create: if isSignedIn() &&
+          isValidId(workerId) &&
+          isValidId(logId) &&
+          isOwner(workerId) &&
+          incoming().userId == workerId &&
+          incoming().keys().hasAll(['userId', 'note', 'mediaType', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'taskId', 'note', 'mediaType', 'thumbnailBase64', 'latitude', 'longitude', 'createdAt']) &&
+          isValidMediaLog(incoming());
+
+        allow update: if false;
+        allow delete: if isValidId(workerId) && isValidId(logId) && (isOwner(workerId) || isAdmin());
+      }
+    }
+
+    match /tasks/{taskId} {
+      allow get: if isValidId(taskId) && (isAdmin() || (isSignedIn() && existing().assignedWorkerId == request.auth.uid));
+      allow list: if isAdmin() || (isSignedIn() && resource.data.assignedWorkerId == request.auth.uid);
+
+      allow create: if isAdmin() &&
+        isValidId(taskId) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().keys().hasAll([
+          'title', 'description', 'assignedWorkerId', 'assignedWorkerName',
+          'createdBy', 'priority', 'status', 'locationLabel', 'workerNotes',
+          'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'title', 'description', 'assignedWorkerId', 'assignedWorkerName',
+          'createdBy', 'priority', 'status', 'locationLabel', 'workerNotes',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidTask(incoming()) &&
+        exists(/databases/$(database)/documents/workers/$(incoming().assignedWorkerId));
+
+      allow update: if isSignedIn() &&
+        isValidId(taskId) &&
+        isValidTask(incoming()) &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+            'title', 'description', 'assignedWorkerId', 'assignedWorkerName',
+            'priority', 'status', 'locationLabel', 'workerNotes', 'updatedAt'
+          ])) ||
+          (existing().assignedWorkerId == request.auth.uid &&
+            existing().status != 'COMPLETED' &&
+            incoming().assignedWorkerId == existing().assignedWorkerId &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'workerNotes', 'updatedAt'
+            ])
+          )
+        );
+
+      allow delete: if isValidId(taskId) && isAdmin();
+    }
+  }
+}
