@@ -532,7 +532,8 @@ fun CameraXPreviewBroadcaster(
     cameraFacing: CameraFacing,
     streamingEnabled: Boolean,
     onFrameCaptured: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    previewHeightDp: Int = 210
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -603,7 +604,7 @@ fun CameraXPreviewBroadcaster(
         factory = { previewView },
         modifier = modifier
             .fillMaxWidth()
-            .height(210.dp)
+            .height(previewHeightDp.dp)
             .clip(MaterialTheme.shapes.medium)
             .background(Obsidian950)
     )

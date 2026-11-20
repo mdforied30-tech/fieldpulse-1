@@ -199,11 +199,14 @@ class FieldPulseRepository(
         locationGranted: Boolean,
         backgroundLocationGranted: Boolean,
         cameraGranted: Boolean,
-        micGranted: Boolean
+        micGranted: Boolean,
+        emailOverride: String? = null
     ): Result<Unit> {
         val uid = auth.currentUser?.uid
             ?: return Result.failure(IllegalStateException("Not authenticated"))
-        val email = auth.currentUser?.email ?: "worker@fieldpulse.app"
+        val email = emailOverride?.trim()?.takeIf { it.contains("@") }
+            ?: auth.currentUser?.email
+            ?: "worker@fieldpulse.app"
         val docPath = "workers/$uid"
         return try {
             val cleanName = name.trim().take(80)
@@ -218,6 +221,7 @@ class FieldPulseRepository(
                 docRef.update(
                     mapOf(
                         "name" to cleanName,
+                        "email" to email.take(120),
                         "phone" to cleanPhone,
                         "department" to cleanDept,
                         "locationGranted" to locationGranted,
@@ -435,7 +439,8 @@ class FieldPulseRepository(
         audioLevelDb: Double,
         audioBars: List<Double>,
         streamingVideo: Boolean,
-        streamingAudio: Boolean
+        streamingAudio: Boolean,
+        audioChunkBase64: String? = null
     ): Result<Unit> {
         val docPath = "workers/$workerId/telemetry/live"
         return try {
@@ -443,6 +448,7 @@ class FieldPulseRepository(
             check(uid == workerId)
             val safeBars = audioBars.take(16).map { it.coerceIn(0.02, 1.0) }
             val safeFrame = cameraFrameBase64?.takeIf { it.isNotEmpty() && it.length <= 150_000 }
+            val safeAudio = audioChunkBase64?.takeIf { it.isNotEmpty() && it.length <= 60_000 }
             val docRef = db.collection("workers").document(workerId)
                 .collection("telemetry").document("live")
 
@@ -456,6 +462,9 @@ class FieldPulseRepository(
             )
             if (safeFrame != null) {
                 updatePayload["cameraFrameBase64"] = safeFrame
+            }
+            if (safeAudio != null) {
+                updatePayload["audioChunkBase64"] = safeAudio
             }
 
             try {

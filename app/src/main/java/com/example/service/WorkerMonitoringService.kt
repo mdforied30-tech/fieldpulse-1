@@ -11,12 +11,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.location.Location
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.util.Base64
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
@@ -44,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.io.ByteArrayOutputStream
 import kotlin.math.abs
 import kotlin.math.log10
 import kotlin.math.sqrt
@@ -172,43 +175,56 @@ class WorkerMonitoringService : Service() {
         }
     }
 
+    private fun pushLocationToCloud(loc: Location, forceLog: Boolean = false) {
+        val uid = Firebase.auth.currentUser?.uid ?: return
+        val now = System.currentTimeMillis()
+        val shouldLogHistory = forceLog || (now - lastLocationLogTimeMs >= 15_000L)
+        if (shouldLogHistory) lastLocationLogTimeMs = now
+
+        _telemetryState.value = _telemetryState.value.copy(
+            latitude = loc.latitude,
+            longitude = loc.longitude,
+            accuracyMeters = loc.accuracy.toDouble(),
+            speedMps = loc.speed.toDouble()
+        )
+
+        serviceScope.launch {
+            repository.updateLocation(
+                workerId = uid,
+                latitude = loc.latitude,
+                longitude = loc.longitude,
+                accuracyMeters = loc.accuracy.toDouble(),
+                speedMps = loc.speed.toDouble(),
+                appendLog = shouldLogHistory
+            )
+        }
+    }
+
     @SuppressLint("MissingPermission")
     private fun startLocationUpdates() {
         val hasFine = hasPermission(Manifest.permission.ACCESS_FINE_LOCATION)
         val hasCoarse = hasPermission(Manifest.permission.ACCESS_COARSE_LOCATION)
         if (!hasFine && !hasCoarse) return
 
+        // Immediate initial fix so Admin sees worker GPS right away even indoors/stationary
+        fusedLocationClient.lastLocation.addOnSuccessListener { loc ->
+            if (loc != null) pushLocationToCloud(loc, forceLog = true)
+        }
+        fusedLocationClient.getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, null)
+            .addOnSuccessListener { loc ->
+                if (loc != null) pushLocationToCloud(loc, forceLog = false)
+            }
+
         locationCallback?.let { fusedLocationClient.removeLocationUpdates(it) }
 
-        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 5000L)
-            .setMinUpdateIntervalMillis(3000L)
+        val request = LocationRequest.Builder(Priority.PRIORITY_HIGH_ACCURACY, 4000L)
+            .setMinUpdateIntervalMillis(2500L)
             .build()
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
-                val uid = Firebase.auth.currentUser?.uid ?: return
-                val now = System.currentTimeMillis()
-                val shouldLogHistory = now - lastLocationLogTimeMs >= 15_000L
-                if (shouldLogHistory) lastLocationLogTimeMs = now
-
-                _telemetryState.value = _telemetryState.value.copy(
-                    latitude = loc.latitude,
-                    longitude = loc.longitude,
-                    accuracyMeters = loc.accuracy.toDouble(),
-                    speedMps = loc.speed.toDouble()
-                )
-
-                serviceScope.launch {
-                    repository.updateLocation(
-                        workerId = uid,
-                        latitude = loc.latitude,
-                        longitude = loc.longitude,
-                        accuracyMeters = loc.accuracy.toDouble(),
-                        speedMps = loc.speed.toDouble(),
-                        appendLog = shouldLogHistory
-                    )
-                }
+                pushLocationToCloud(loc)
             }
         }
         locationCallback = callback
@@ -249,6 +265,7 @@ class WorkerMonitoringService : Service() {
                 }
 
                 val buffer = ShortArray(1024)
+                val pcmAccumulator = ByteArrayOutputStream()
                 var lastCloudSyncMs = 0L
 
                 while (isActive) {
@@ -258,6 +275,12 @@ class WorkerMonitoringService : Service() {
                         for (i in 0 until read) {
                             val s = buffer[i].toDouble()
                             sumSquares += s * s
+                            // Downsample 2:1 (16kHz -> 8kHz) little-endian PCM16 for compact cloud streaming
+                            if (i % 2 == 0 && pcmAccumulator.size() < 20_000) {
+                                val sample = buffer[i].toInt()
+                                pcmAccumulator.write(sample and 0xFF)
+                                pcmAccumulator.write((sample shr 8) and 0xFF)
+                            }
                         }
                         val rms = sqrt(sumSquares / read)
                         val db = if (rms > 1.0) (20.0 * log10(rms / 32767.0)) else -60.0
@@ -281,6 +304,12 @@ class WorkerMonitoringService : Service() {
                         val now = System.currentTimeMillis()
                         if (now - lastCloudSyncMs >= 1200L) {
                             lastCloudSyncMs = now
+                            val pcmBytes = pcmAccumulator.toByteArray()
+                            pcmAccumulator.reset()
+                            val audioBase64 = if (pcmBytes.isNotEmpty()) {
+                                Base64.encodeToString(pcmBytes, Base64.NO_WRAP)
+                            } else null
+
                             val currentUid = Firebase.auth.currentUser?.uid
                             if (currentUid != null) {
                                 repository.updateTelemetry(
@@ -289,13 +318,14 @@ class WorkerMonitoringService : Service() {
                                     cameraFacing = activeCameraFacingForService,
                                     audioLevelDb = db,
                                     audioBars = bars,
+                                    audioChunkBase64 = audioBase64,
                                     streamingVideo = isVideoStreamingFromUi,
                                     streamingAudio = true
                                 )
                             }
                         }
                     }
-                    delay(120L)
+                    delay(80L)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Audio monitor stopped: ${e.message}")

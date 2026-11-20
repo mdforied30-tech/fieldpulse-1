@@ -13,7 +13,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
@@ -49,7 +48,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -59,16 +57,15 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.credentials.CredentialManager
 import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.APPLICATION_KEY
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.auth.AuthScreen
-import com.example.auth.getSavedPortal
-import com.example.auth.saveSelectedPortal
-import com.example.auth.signOut
+import com.example.auth.PortalAuthStore
+import com.example.auth.PortalSession
+import com.example.auth.signOutPortalOnly
 import com.example.data.model.AppMode
 import com.example.data.model.SUPER_ADMIN_EMAIL
 import com.example.data.repository.FieldPulseRepository
@@ -113,49 +110,46 @@ private fun FirebaseAuth.authStateFlow(): Flow<FirebaseUser?> = callbackFlow {
 @Composable
 fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
     val currentUser by auth.authStateFlow()
         .collectAsStateWithLifecycle(initialValue = auth.currentUser)
 
-    var selectedPortal by remember { mutableStateOf(getSavedPortal(context)) }
+    var portalSession by remember { mutableStateOf(PortalAuthStore.loadSession(context)) }
     var authGateError by remember { mutableStateOf<String?>(null) }
 
     val user = currentUser
     val isAdminAccount =
         user != null && user.email.equals(SUPER_ADMIN_EMAIL, ignoreCase = true) && user.isEmailVerified
 
-    val isUnauthorizedAdminPortal =
-        user != null && selectedPortal == AppMode.ADMIN && !isAdminAccount
+    val isUnauthorizedAdminSession =
+        portalSession.loggedIn && portalSession.mode == AppMode.ADMIN && user != null && !isAdminAccount
 
-    LaunchedEffect(isUnauthorizedAdminPortal) {
-        if (isUnauthorizedAdminPortal) {
-            authGateError = "Access denied: Only Admin ($SUPER_ADMIN_EMAIL) can log in to the Admin Portal. Please use Workers Login."
-            signOut(context, credentialManager, scope) {
-                selectedPortal = null
+    LaunchedEffect(isUnauthorizedAdminSession) {
+        if (isUnauthorizedAdminSession) {
+            authGateError = "Admin session requires Cloud Sync with $SUPER_ADMIN_EMAIL. Please verify Admin login."
+            signOutPortalOnly(context) {
+                portalSession = PortalSession(loggedIn = false)
             }
         }
     }
 
-    if (user == null || isUnauthorizedAdminPortal) {
+    if (user == null || !portalSession.loggedIn || isUnauthorizedAdminSession) {
         AuthScreen(
+            firebaseUser = user,
             externalError = authGateError,
             onClearExternalError = { authGateError = null },
-            onAuthSuccess = { portal ->
-                saveSelectedPortal(context, portal)
-                selectedPortal = portal
+            onAuthSuccess = { newSession ->
+                portalSession = newSession
             }
         )
     } else {
-        val resolvedInitialMode = when {
-            selectedPortal == AppMode.WORKER -> AppMode.WORKER
-            selectedPortal == AppMode.ADMIN && isAdminAccount -> AppMode.ADMIN
-            isAdminAccount -> AppMode.ADMIN
-            else -> AppMode.WORKER
+        val resolvedMode = if (portalSession.mode == AppMode.ADMIN && isAdminAccount) {
+            AppMode.ADMIN
+        } else {
+            AppMode.WORKER
         }
-        key(user.uid, resolvedInitialMode) {
+        key(user.uid, resolvedMode, portalSession.email) {
             val viewModel: MainViewModel = viewModel(
-                key = "${user.uid}_${resolvedInitialMode.name}",
+                key = "${user.uid}_${resolvedMode.name}_${portalSession.email}",
                 factory = viewModelFactory {
                     initializer {
                         val app = checkNotNull(this[APPLICATION_KEY])
@@ -164,19 +158,20 @@ fun AppNavigation(auth: FirebaseAuth = Firebase.auth) {
                         MainViewModel(
                             repository = FieldPulseRepository(db),
                             currentUserId = user.uid,
-                            userEmail = user.email.orEmpty(),
-                            userDisplayName = user.displayName.orEmpty(),
+                            userEmail = portalSession.email.ifBlank { user.email.orEmpty() },
+                            userDisplayName = portalSession.name.ifBlank { user.displayName.orEmpty() },
                             isAdminAccount = isAdminAccount,
-                            initialMode = resolvedInitialMode
+                            initialMode = resolvedMode
                         )
                     }
                 }
             )
             FieldPulseShell(
                 viewModel = viewModel,
+                portalSession = portalSession,
                 onSignOutClick = {
-                    signOut(context, credentialManager, scope) {
-                        selectedPortal = null
+                    signOutPortalOnly(context) {
+                        portalSession = PortalSession(loggedIn = false)
                     }
                 }
             )
@@ -194,11 +189,9 @@ private data class NavDestination(
 @Composable
 fun FieldPulseShell(
     viewModel: MainViewModel,
+    portalSession: PortalSession,
     onSignOutClick: () -> Unit
 ) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val credentialManager = remember(context) { CredentialManager.create(context) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val appMode by viewModel.appMode.collectAsStateWithLifecycle()
@@ -271,7 +264,7 @@ fun FieldPulseShell(
                         }
                     },
                     actions = {
-                        if (viewModel.isAdminAccount) {
+                        if (viewModel.isAdminAccount && portalSession.mode == AppMode.ADMIN) {
                             FilterChip(
                                 selected = appMode == AppMode.WORKER,
                                 onClick = {
@@ -399,8 +392,11 @@ fun FieldPulseShell(
                                 0 -> WorkerDashboardScreen(
                                     workerState = myWorkerState,
                                     tasksState = myTasksState,
-                                    defaultName = viewModel.userDisplayName,
-                                    onRegisterOrUpdateProfile = { name, phone, dept, perms ->
+                                    defaultName = portalSession.name.ifBlank { viewModel.userDisplayName },
+                                    portalEmail = portalSession.email,
+                                    portalPhone = portalSession.phone,
+                                    portalDept = portalSession.department,
+                                    onRegisterOrUpdateProfile = { name, phone, dept, perms, emailOverride ->
                                         viewModel.registerOrUpdateWorker(
                                             name = name,
                                             phone = phone,
@@ -408,7 +404,8 @@ fun FieldPulseShell(
                                             locationGranted = perms.locationGranted,
                                             backgroundLocationGranted = perms.backgroundLocationGranted,
                                             cameraGranted = perms.cameraGranted,
-                                            micGranted = perms.micGranted
+                                            micGranted = perms.micGranted,
+                                            emailOverride = emailOverride
                                         )
                                     },
                                     onSyncPermissions = { perms ->
@@ -419,6 +416,9 @@ fun FieldPulseShell(
                                             micGranted = perms.micGranted
                                         )
                                     },
+                                    onToggleCameraBroadcast = viewModel::toggleWorkerCameraStream,
+                                    onToggleMicBroadcast = viewModel::toggleWorkerMicStream,
+                                    onPublishFrame = viewModel::publishCameraFrame,
                                     onUpdateTaskStatus = viewModel::updateTaskStatus,
                                     onAddProofLog = viewModel::addWorkProofLog
                                 )

@@ -130,7 +130,8 @@ class MainViewModel(
         locationGranted: Boolean,
         backgroundLocationGranted: Boolean,
         cameraGranted: Boolean,
-        micGranted: Boolean
+        micGranted: Boolean,
+        emailOverride: String? = null
     ) {
         viewModelScope.launch {
             val res = repository.upsertWorkerRegistration(
@@ -140,7 +141,8 @@ class MainViewModel(
                 locationGranted = locationGranted,
                 backgroundLocationGranted = backgroundLocationGranted,
                 cameraGranted = cameraGranted,
-                micGranted = micGranted
+                micGranted = micGranted,
+                emailOverride = emailOverride
             )
             res.onSuccess {
                 _toastEvents.tryEmit("Worker profile synced with Command Center")

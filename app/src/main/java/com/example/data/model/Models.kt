@@ -111,6 +111,7 @@ data class WorkerTelemetry(
     val cameraFacing: String = CameraFacing.BACK.name,
     val audioLevelDb: Double = -60.0,
     val audioBars: List<Double> = List(16) { 0.08 },
+    val audioChunkBase64: String = "",
     val streamingVideo: Boolean = false,
     val streamingAudio: Boolean = false,
     @ServerTimestamp val updatedAt: Timestamp? = null

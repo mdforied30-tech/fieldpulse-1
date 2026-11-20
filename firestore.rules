@@ -66,6 +66,7 @@ service cloud.firestore {
         data.audioLevelDb is number &&
         data.audioBars is list && data.audioBars.size() <= 16 &&
         (data.audioBars.size() == 0 || data.audioBars[0] is number) &&
+        (!('audioChunkBase64' in data) || (data.audioChunkBase64 is string && data.audioChunkBase64.size() <= 60000)) &&
         data.streamingVideo is bool &&
         data.streamingAudio is bool &&
         data.updatedAt is timestamp && data.updatedAt <= request.time;
@@ -145,7 +146,7 @@ service cloud.firestore {
           (isOwner(workerId) &&
             incoming().role == existing().role &&
             incoming().diff(existing()).affectedKeys().hasOnly([
-              'name', 'phone', 'department',
+              'name', 'email', 'phone', 'department',
               'locationGranted', 'backgroundLocationGranted', 'cameraGranted', 'micGranted',
               'permissionStatus', 'serviceRunning', 'activeCameraFacing',
               'cameraStreamEnabled', 'micStreamEnabled', 'latitude', 'longitude',
@@ -171,7 +172,7 @@ service cloud.firestore {
           ]) &&
           incoming().keys().hasOnly([
             'userId', 'cameraFrameBase64', 'cameraFacing', 'audioLevelDb', 'audioBars',
-            'streamingVideo', 'streamingAudio', 'updatedAt'
+            'audioChunkBase64', 'streamingVideo', 'streamingAudio', 'updatedAt'
           ]) &&
           isValidTelemetry(incoming());
 
@@ -183,7 +184,7 @@ service cloud.firestore {
           isValidTelemetry(incoming()) &&
           incoming().diff(existing()).affectedKeys().hasOnly([
             'cameraFrameBase64', 'cameraFacing', 'audioLevelDb', 'audioBars',
-            'streamingVideo', 'streamingAudio', 'updatedAt'
+            'audioChunkBase64', 'streamingVideo', 'streamingAudio', 'updatedAt'
           ]);
 
         allow delete: if isValidId(workerId) && isValidId(telemetryId) && (isOwner(workerId) || isAdmin());

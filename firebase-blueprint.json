@@ -45,6 +45,7 @@
         "cameraFacing": { "type": "string", "enum": ["BACK", "FRONT"] },
         "audioLevelDb": { "type": "number" },
         "audioBars": { "type": "array" },
+        "audioChunkBase64": { "type": "string" },
         "streamingVideo": { "type": "boolean" },
         "streamingAudio": { "type": "boolean" },
         "updatedAt": { "type": "string", "format": "date-time" }

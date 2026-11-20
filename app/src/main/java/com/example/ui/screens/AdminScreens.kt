@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import android.util.Base64
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -55,10 +59,14 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -380,6 +388,72 @@ fun UnifiedWorkerControlCenter(
         .filter { it.assignedWorkerId == workerId }
 
     var audioMutedLocally by remember { mutableStateOf(false) }
+
+    val audioTrack = remember(workerId) {
+        try {
+            val sampleRate = 8000
+            val minBuf = AudioTrack.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_OUT_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            ).coerceAtLeast(4096)
+            AudioTrack.Builder()
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setAudioFormat(
+                    AudioFormat.Builder()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .build()
+                )
+                .setTransferMode(AudioTrack.MODE_STREAM)
+                .setBufferSizeInBytes(minBuf * 2)
+                .build()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    DisposableEffect(audioTrack) {
+        onDispose {
+            try {
+                audioTrack?.stop()
+                audioTrack?.release()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    LaunchedEffect(telemetry?.audioChunkBase64, audioMutedLocally) {
+        val chunk = telemetry?.audioChunkBase64
+        if (audioTrack == null || audioMutedLocally || chunk.isNullOrBlank()) {
+            if (audioMutedLocally) {
+                try {
+                    audioTrack?.pause()
+                    audioTrack?.flush()
+                } catch (_: Exception) {
+                }
+            }
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) {
+            try {
+                val pcmBytes = Base64.decode(chunk, Base64.DEFAULT)
+                if (pcmBytes.isNotEmpty()) {
+                    if (audioTrack.playState != AudioTrack.PLAYSTATE_PLAYING) {
+                        audioTrack.play()
+                    }
+                    audioTrack.write(pcmBytes, 0, pcmBytes.size)
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
 
     Column(
         modifier = modifier

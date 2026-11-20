@@ -56,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -121,8 +122,14 @@ fun WorkerDashboardScreen(
     workerState: UiState<WorkerProfile?>,
     tasksState: UiState<List<FieldTask>>,
     defaultName: String,
-    onRegisterOrUpdateProfile: (String, String, String, LocalPermissionState) -> Unit,
+    portalEmail: String,
+    portalPhone: String,
+    portalDept: String,
+    onRegisterOrUpdateProfile: (String, String, String, LocalPermissionState, String?) -> Unit,
     onSyncPermissions: (LocalPermissionState) -> Unit,
+    onToggleCameraBroadcast: (Boolean, CameraFacing) -> Unit,
+    onToggleMicBroadcast: (Boolean) -> Unit,
+    onPublishFrame: (String, CameraFacing, Double, List<Double>, Boolean) -> Unit,
     onUpdateTaskStatus: (String, TaskStatus, String) -> Unit,
     onAddProofLog: (String?, String, MediaLogType, String?, Double?, Double?) -> Unit,
     modifier: Modifier = Modifier
@@ -136,6 +143,27 @@ fun WorkerDashboardScreen(
     var proofTaskForDialog by remember { mutableStateOf<FieldTask?>(null) }
     var showGeneralProofDialog by remember { mutableStateOf(false) }
 
+    var userPausedCamera by rememberSaveable { mutableStateOf(false) }
+    val requestedFacing = CameraFacing.fromRaw(worker?.requestedCameraFacing)
+    var activeFacing by remember { mutableStateOf(requestedFacing) }
+
+    val cameraBroadcasting = worker != null && localPerms.cameraGranted && !userPausedCamera
+
+    fun ensureMonitoringStarted(perms: LocalPermissionState) {
+        if ((perms.locationGranted || perms.cameraGranted || perms.micGranted) &&
+            !WorkerMonitoringService.telemetryState.value.running
+        ) {
+            WorkerMonitoringService.start(context)
+        }
+        if (perms.micGranted) {
+            WorkerMonitoringService.setMicEnabled(context, true)
+            onToggleMicBroadcast(true)
+        }
+        if (perms.cameraGranted && !userPausedCamera) {
+            onToggleCameraBroadcast(true, activeFacing)
+        }
+    }
+
     val bgLocationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) {
@@ -143,13 +171,15 @@ fun WorkerDashboardScreen(
         if (worker == null) {
             onRegisterOrUpdateProfile(
                 defaultName.ifBlank { "Field Worker" },
-                "",
-                "Field Operations",
-                localPerms
+                portalPhone,
+                portalDept.ifBlank { "Field Operations" },
+                localPerms,
+                portalEmail.takeIf { it.isNotBlank() }
             )
         } else {
             onSyncPermissions(localPerms)
         }
+        ensureMonitoringStarted(localPerms)
     }
 
     val corePermissionsLauncher = rememberLauncherForActivityResult(
@@ -159,13 +189,16 @@ fun WorkerDashboardScreen(
         if (worker == null) {
             onRegisterOrUpdateProfile(
                 defaultName.ifBlank { "Field Worker" },
-                "",
-                "Field Operations",
-                localPerms
+                portalPhone,
+                portalDept.ifBlank { "Field Operations" },
+                localPerms,
+                portalEmail.takeIf { it.isNotBlank() }
             )
         } else {
             onSyncPermissions(localPerms)
         }
+        ensureMonitoringStarted(localPerms)
+
         if (localPerms.locationGranted &&
             !localPerms.backgroundLocationGranted &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
@@ -174,10 +207,37 @@ fun WorkerDashboardScreen(
         }
     }
 
-    LaunchedEffect(worker?.userId) {
+    // Auto-register worker profile if logged in via Worker Portal form & sync existing permissions
+    LaunchedEffect(workerState, portalEmail, defaultName) {
         localPerms = readLocalPermissions(context)
-        if (worker != null) {
+        if (workerState is UiState.Success && worker == null && defaultName.isNotBlank()) {
+            onRegisterOrUpdateProfile(
+                defaultName,
+                portalPhone,
+                portalDept.ifBlank { "Field Operations" },
+                localPerms,
+                portalEmail.takeIf { it.isNotBlank() }
+            )
+        } else if (worker != null) {
             onSyncPermissions(localPerms)
+            ensureMonitoringStarted(localPerms)
+        }
+    }
+
+    // Sync Admin's remote camera facing requests (Front/Back switch) immediately
+    LaunchedEffect(worker?.requestedCameraFacing) {
+        val req = CameraFacing.fromRaw(worker?.requestedCameraFacing)
+        if (req != activeFacing) {
+            activeFacing = req
+            onToggleCameraBroadcast(cameraBroadcasting, req)
+        }
+    }
+
+    LaunchedEffect(cameraBroadcasting, activeFacing) {
+        WorkerMonitoringService.isVideoStreamingFromUi = cameraBroadcasting
+        WorkerMonitoringService.activeCameraFacingForService = activeFacing
+        if (worker != null && localPerms.cameraGranted) {
+            onToggleCameraBroadcast(cameraBroadcasting, activeFacing)
         }
     }
 
@@ -193,9 +253,17 @@ fun WorkerDashboardScreen(
                 color = Emerald400
             )
             Text(
-                text = worker?.name?.ifBlank { "Worker Onboarding" } ?: "Worker Portal",
+                text = worker?.name?.ifBlank { defaultName.ifBlank { "Worker Portal" } }
+                    ?: defaultName.ifBlank { "Worker Portal" },
                 style = MaterialTheme.typography.headlineMedium
             )
+            if (portalEmail.isNotBlank()) {
+                Text(
+                    text = portalEmail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
 
         // Always show "Allow All" Permission Onboarding immediately upon entering Workers Portal
@@ -225,18 +293,20 @@ fun WorkerDashboardScreen(
             )
         }
 
-        if (worker == null && workerState is UiState.Success) {
+        if (worker == null && workerState is UiState.Success && defaultName.isBlank()) {
             item {
                 WorkerRegistrationCard(
                     defaultName = defaultName,
+                    defaultPhone = portalPhone,
+                    defaultDept = portalDept,
                     onSubmit = { name, phone, dept ->
-                        onRegisterOrUpdateProfile(name, phone, dept, localPerms)
+                        onRegisterOrUpdateProfile(name, phone, dept, localPerms, portalEmail.takeIf { it.isNotBlank() })
                     }
                 )
             }
         } else if (worker != null) {
 
-            // Persistent Foreground Service Telemetry Card
+            // Persistent Foreground Service GPS + Audio Card
             item {
                 Card(
                     shape = MaterialTheme.shapes.large,
@@ -254,15 +324,15 @@ fun WorkerDashboardScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = "Background Telemetry Service",
+                                    text = "Live GPS & Audio Sync",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.SemiBold
                                 )
                                 Text(
                                     text = if (serviceTelemetry.running) {
-                                        "Foreground Service active • ${serviceTelemetry.uptimeSeconds}s"
+                                        "Sharing GPS & Mic • ${serviceTelemetry.uptimeSeconds}s active"
                                     } else {
-                                        "Start persistent GPS & audio service"
+                                        "Tap Start Live to transmit GPS & Mic"
                                     },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (serviceTelemetry.running) Emerald400 else MaterialTheme.colorScheme.onSurfaceVariant
@@ -299,11 +369,91 @@ fun WorkerDashboardScreen(
                             text = if (lat != null && lon != null) {
                                 String.format("GPS Fix: %.5f, %.5f", lat, lon)
                             } else {
-                                "GPS Fix: Waiting for location lock..."
+                                "GPS Fix: Acquiring location lock..."
                             },
                             style = MaterialTheme.typography.labelMedium,
                             color = Cyan400
                         )
+
+                        if (localPerms.micGranted) {
+                            LiveAudioVisualizer(
+                                audioLevelDb = serviceTelemetry.audioLevelDb,
+                                audioBars = serviceTelemetry.audioBars,
+                                streamingAudio = serviceTelemetry.micCaptureActive,
+                                mutedLocally = false,
+                                onToggleMute = {}
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Live Camera Sharing Card right on Field Desk so video frames stream immediately
+            if (localPerms.cameraGranted) {
+                item {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Videocam,
+                                        contentDescription = null,
+                                        tint = if (cameraBroadcasting) Emerald400 else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column {
+                                        Text(
+                                            text = "Live Camera Sharing",
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold
+                                        )
+                                        Text(
+                                            text = if (cameraBroadcasting) {
+                                                "Streaming ${activeFacing.name} lens to Admin"
+                                            } else {
+                                                "Camera sharing paused"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (cameraBroadcasting) Emerald400 else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                Switch(
+                                    checked = cameraBroadcasting,
+                                    onCheckedChange = { enabled ->
+                                        userPausedCamera = !enabled
+                                        onToggleCameraBroadcast(enabled, activeFacing)
+                                    },
+                                    modifier = Modifier.testTag("desk_camera_broadcast_switch")
+                                )
+                            }
+
+                            CameraXPreviewBroadcaster(
+                                cameraFacing = activeFacing,
+                                streamingEnabled = cameraBroadcasting,
+                                onFrameCaptured = { base64 ->
+                                    onPublishFrame(
+                                        base64,
+                                        activeFacing,
+                                        serviceTelemetry.audioLevelDb,
+                                        serviceTelemetry.audioBars,
+                                        serviceTelemetry.micCaptureActive
+                                    )
+                                },
+                                previewHeightDp = 160
+                            )
+                        }
                     }
                 }
             }
@@ -399,9 +549,17 @@ fun WorkerBroadcasterScreen(
     val localPerms = remember(worker) { readLocalPermissions(context) }
 
     val requestedFacing = CameraFacing.fromRaw(worker?.requestedCameraFacing)
-    var activeFacing by remember(requestedFacing) { mutableStateOf(requestedFacing) }
-    var cameraBroadcasting by remember(worker?.cameraStreamEnabled) {
-        mutableStateOf(worker?.cameraStreamEnabled ?: false)
+    var activeFacing by remember { mutableStateOf(requestedFacing) }
+    var cameraBroadcasting by remember(worker?.cameraStreamEnabled, localPerms.cameraGranted) {
+        mutableStateOf(worker?.cameraStreamEnabled ?: localPerms.cameraGranted)
+    }
+
+    LaunchedEffect(worker?.requestedCameraFacing) {
+        val req = CameraFacing.fromRaw(worker?.requestedCameraFacing)
+        if (req != activeFacing) {
+            activeFacing = req
+            onToggleCameraBroadcast(cameraBroadcasting, req)
+        }
     }
 
     LaunchedEffect(cameraBroadcasting, activeFacing) {
@@ -536,7 +694,7 @@ fun WorkerBroadcasterScreen(
                             Column {
                                 Text("Microphone Audio Stream", style = MaterialTheme.typography.titleMedium)
                                 Text(
-                                    text = if (serviceTelemetry.micCaptureActive) "Transmitting dBFS telemetry" else "Mic standby",
+                                    text = if (serviceTelemetry.micCaptureActive) "Transmitting live audio" else "Mic standby",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -613,11 +771,13 @@ fun WorkerProofLogsScreen(
 @Composable
 private fun WorkerRegistrationCard(
     defaultName: String,
+    defaultPhone: String = "",
+    defaultDept: String = "Field Inspection",
     onSubmit: (String, String, String) -> Unit
 ) {
     var name by remember(defaultName) { mutableStateOf(defaultName) }
-    var phone by remember { mutableStateOf("") }
-    var department by remember { mutableStateOf("Field Inspection") }
+    var phone by remember(defaultPhone) { mutableStateOf(defaultPhone) }
+    var department by remember(defaultDept) { mutableStateOf(defaultDept.ifBlank { "Field Inspection" }) }
 
     Card(
         shape = MaterialTheme.shapes.large,

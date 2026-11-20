@@ -187,6 +187,7 @@ test("Worker permission instant sync & telemetry streaming succeed; cross-user a
       cameraFacing: "BACK",
       audioLevelDb: -18.5,
       audioBars: [0.2, 0.4, 0.7, 0.5],
+      audioChunkBase64: "AQIDBA==",
       streamingVideo: true,
       streamingAudio: true,
       updatedAt: pastDate(500),
